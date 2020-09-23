@@ -36,34 +36,34 @@
 #include <math.h>
 #include <unistd.h>
 #include <Python.h>
+#include <Exp_mat.h>
+#include <ros/ros.h>
 #include <Eigen/Core>
 #include <opencv/cv.h>
 #include <common_lib.h>
-#include <nav_msgs/Odometry.h>
-#include <opencv2/core/eigen.hpp>
-#include <visualization_msgs/Marker.h>
-#include <pcl_conversions/pcl_conversions.h>
+#include <pcl/io/pcd_io.h>
 #include <pcl/point_cloud.h>
 #include <pcl/point_types.h>
-#include <pcl/filters/voxel_grid.h>
-#include <pcl/kdtree/kdtree_flann.h>
-#include <pcl/io/pcd_io.h>
-
-#include <ros/ros.h>
-#include <sensor_msgs/PointCloud2.h>
-#include <tf/transform_datatypes.h>
-#include <tf/transform_broadcaster.h>
-#include <like_loam/KeyPointPose.h>
+#include <nav_msgs/Odometry.h>
+#include <opencv2/core/eigen.hpp>
 #include <geometry_msgs/Vector3.h>
-#include "Exp_mat.h"
+#include <like_loam/KeyPointPose.h>
+#include <pcl/filters/voxel_grid.h>
+#include <tf/transform_datatypes.h>
+#include <pcl/kdtree/kdtree_flann.h>
+#include <sensor_msgs/PointCloud2.h>
+#include <tf/transform_broadcaster.h>
+#include <visualization_msgs/Marker.h>
+#include <pcl_conversions/pcl_conversions.h>
+
+#ifdef PLOT_AT_END
 #include "matplotlibcpp.h"
-
 namespace plt = matplotlibcpp;
+#endif
 
-// #define USING_CORNER
 #define INIT_TIME (2.0)
 #define NUM_MATCH_POINTS (5)
-#define NUM_MAX_ITERATIONS (15)
+#define NUM_MAX_ITERATIONS (12)
 #define LASER_FRAME_INTEVAL (0.1)
 #define LASER_POINT_COV (0.0010)
 
@@ -103,8 +103,8 @@ pcl::PointCloud<PointType>::Ptr laserCloudCornerLast_down(new pcl::PointCloud<Po
 std::deque<sensor_msgs::PointCloud2> LaserCloudSurfaceBuff;
 pcl::PointCloud<PointType>::Ptr laserCloudSurfLast(new pcl::PointCloud<PointType>());
 pcl::PointCloud<PointType>::Ptr laserCloudSurf_down(new pcl::PointCloud<PointType>());
-pcl::PointCloud<PointType>::Ptr laserCloudOri(new pcl::PointCloud<PointType>());
-pcl::PointCloud<PointType>::Ptr coeffSel(new pcl::PointCloud<PointType>());
+pcl::PointCloud<PointType> laserCloudOri;
+pcl::PointCloud<PointType> coeffSel;
 
 // pcl::PointCloud<PointType>::Ptr laserCloudSurround(new pcl::PointCloud<PointType>());
 // pcl::PointCloud<PointType>::Ptr laserCloudSurround_corner(new pcl::PointCloud<PointType>());
@@ -347,8 +347,9 @@ int main(int argc, char** argv)
     cv::Mat matV1(3, 3, CV_32F, cv::Scalar::all(0));
 
     bool isDegenerate = false;
-    cv::Mat matP(6, 6, CV_32F, cv::Scalar::all(0));
-    //VoxelGrid
+    int degenerate_count = 0;
+    double total_residual = 0.0;
+
     pcl::VoxelGrid<PointType> downSizeFilterCorner;
     pcl::VoxelGrid<PointType> downSizeFilterSurf;
     pcl::VoxelGrid<PointType> downSizeFilterMap;
@@ -378,7 +379,6 @@ int main(int argc, char** argv)
 
         while(!LaserCloudSurfaceBuff.empty() && !rot_kp_imu_buff.empty() && sync_packages()) 
         {
-            static int degenerate_count = 0;
             static double first_lidar_time = LaserCloudSurfaceBuff.front().header.stamp.toSec();
             bool Need_Init = (timeLaserCloudSurfLast - first_lidar_time < INIT_TIME) ? true : false;
             if(Need_Init) {std::cout<<"||||||||||Initiallizing LiDar||||||||||"<<std::endl;}
@@ -747,8 +747,8 @@ int main(int argc, char** argv)
 
             
 
-            pcl::PointCloud<PointType>::Ptr coeffSel_tmpt
-                (new pcl::PointCloud<PointType>(*laserCloudSurf_down));
+            // pcl::PointCloud<PointType>::Ptr coeffSel_tmpt
+            //     (new pcl::PointCloud<PointType>(*laserCloudSurf_down));
             pcl::PointCloud<PointType>::Ptr laserCloudSurf_down_updated
                 (new pcl::PointCloud<PointType>(*laserCloudSurf_down));
 
@@ -776,8 +776,8 @@ int main(int argc, char** argv)
                 
                 for (iterCount = 0; iterCount < NUM_MAX_ITERATIONS; iterCount++) 
                 {
-                    laserCloudOri->clear();
-                    coeffSel->clear();
+                    laserCloudOri.clear();
+                    coeffSel.clear();
 
 #ifdef USING_CONER
                     for (int i = 0; i < laserCloudCornerLast->points.size(); i++) {
@@ -886,21 +886,26 @@ int main(int argc, char** argv)
                                 coeff.intensity = s * ld2;
 
                                 if (s > 0.1) {
-                                    laserCloudOri->push_back(pointOri);
-                                    coeffSel->push_back(coeff);
+                                    laserCloudOri.push_back(pointOri);
+                                    coeffSel.push_back(coeff);
                                 }
                             }
                         }
                     }
 #endif
+                    // parallar closest point search
 
-                    // variables for the points matching
                     omp_set_num_threads(4);
-                    #pragma omp parallel for
+                    #pragma omp parallel
+                    {
+                    pcl::PointCloud<PointType> laserPoint_tmp, coeffSel_tmp;
+                    double total_res_tmp;
+                    #pragma omp for nowait
                     for (int i = 0; i < laserCloudSurf_down_size; i++)
                     {
                         PointType &pointOri_tmpt = laserCloudSurf_down->points[i];
                         PointType &pointSel_tmpt = laserCloudSurf_down_updated->points[i];
+                        PointType coeff_point;
                         pointAssociateToMap(&pointOri_tmpt, &pointSel_tmpt);
 
                         std::vector<float> pointSearchSqDis_surf;
@@ -930,11 +935,6 @@ int main(int argc, char** argv)
                             matA0.at<float>(j, 1) = laserCloudSurfFromMap->points[points_near[j]].y;
                             matA0.at<float>(j, 2) = laserCloudSurfFromMap->points[points_near[j]].z;
                         }
-
-                        //matA0*matX0=matB0
-                        //AX+BY+CZ+D = 0 <=> AX+BY+CZ=-D <=> (A/D)X+(B/D)Y+(C/D)Z = -1
-                        //(X,Y,Z)<=>mat_a0
-                        //A/D, B/D, C/D <=> mat_x0
             
                         cv::solve(matA0, matB0, matX0, cv::DECOMP_QR);  //TODO
 
@@ -974,10 +974,13 @@ int main(int argc, char** argv)
                             if (s > 0.1)
                             {
                                 point_selected_surf[i] = true;
-                                coeffSel_tmpt->points[i].x = s * pa;
-                                coeffSel_tmpt->points[i].y = s * pb;
-                                coeffSel_tmpt->points[i].z = s * pc;
-                                coeffSel_tmpt->points[i].intensity = s * pd2;
+                                laserPoint_tmp.push_back(pointOri_tmpt);
+                                coeff_point.x = s * pa;
+                                coeff_point.y = s * pb;
+                                coeff_point.z = s * pc;
+                                coeff_point.intensity = s * pd2;
+                                coeffSel_tmp.push_back(coeff_point);
+                                total_res_tmp += std::abs(coeff_point.intensity );
                             }
                             else
                             {
@@ -987,23 +990,27 @@ int main(int argc, char** argv)
 
                         pca_time += omp_get_wtime() - pca_start;
                     }
+                    #pragma omp critical 
+                    laserCloudOri.insert(laserCloudOri.end(), laserPoint_tmp.begin(), laserPoint_tmp.end());
+                    coeffSel.insert(coeffSel.end(), coeffSel_tmp.begin(), coeffSel_tmp.end());
+                    total_residual = total_res_tmp;
+                    }
 
-                    double total_residual = 0.0;
-                    for (int i = 0; i < coeffSel_tmpt->points.size(); i++)
+                    for (int i = 0; i < coeffSel.size(); i++)
                     {
-                        float error_abs = std::abs(coeffSel_tmpt->points[i].intensity);
-                        if (point_selected_surf[i] && (error_abs < 0.5))
+                        float error_abs = std::abs(coeffSel[i].intensity);
+                        if (point_selected_surf[i] && (error_abs < 1.0))
                         {
-                            laserCloudOri->push_back(laserCloudSurf_down->points[i]);
-                            coeffSel->push_back(coeffSel_tmpt->points[i]);
-                            total_residual += error_abs;
+                            // laserCloudOri.push_back(laserCloudSurf_down->points[i]);
+                            // coeffSel.push_back(coeffSel_tmpt->points[i]);
+                            
                         }
                     }
 
-                    int laserCloudSelNum = laserCloudOri->points.size();
+                    int laserCloudSelNum = laserCloudOri.points.size();
                     double ave_residual = total_residual / laserCloudSelNum;
 
-                    // std::cout << "DEBUG mapping select all points : " << coeffSel->size() << "  " << count_effect_point << std::endl;
+                    std::cout << "DEBUG mapping select all points : " << coeffSel.size() << "  " << count_effect_point << std::endl;
                     count_effect_point = 0;
 
                     match_time += omp_get_wtime() - match_start;
@@ -1021,20 +1028,17 @@ int main(int argc, char** argv)
                     cv::Mat matA(laserCloudSelNum, 6, CV_32F, cv::Scalar::all(0));
                     cv::Mat matAt(6, laserCloudSelNum, CV_32F, cv::Scalar::all(0));
                     cv::Mat matAtA(6, 6, CV_32F, cv::Scalar::all(0));
-                    cv::Mat matB(laserCloudSelNum, 1, CV_32F, cv::Scalar::all(0));
-                    cv::Mat matAtB(6, 1, CV_32F, cv::Scalar::all(0));
-                    cv::Mat matX(6, 1, CV_32F, cv::Scalar::all(0));
 
                     R_global_f = R_global_cur.cast<float> ();
                     Eigen::MatrixXd H(laserCloudSelNum, DIM_OF_STATES) ;
                     Eigen::VectorXd res(laserCloudSelNum);
-
+                    
                     omp_set_num_threads(4);
                     #pragma omp parallel for
                     for (int i = 0; i < laserCloudSelNum; i++)
                     {
-                        const PointType &laser_p = laserCloudOri->points[i];
-                        const PointType &nor_vec = coeffSel->points[i];
+                        const PointType &laser_p = laserCloudOri.points[i];
+                        const PointType &nor_vec = coeffSel.points[i];
                         
                         Eigen::Vector3d point_this(laser_p.x, laser_p.y, laser_p.z);
                         Eigen::Vector3d vect_norm(nor_vec.x, nor_vec.y, nor_vec.z);
@@ -1044,14 +1048,12 @@ int main(int argc, char** argv)
                         Eigen::Vector3d A(point_crossmat * R_global_cur.transpose() * vect_norm);
                         auto &&A_f = A.cast<float> ();
                         
-                        //TODO: the partial derivative
                         matA.at<float>(i, 0) = A_f(0);
                         matA.at<float>(i, 1) = A_f(1);
                         matA.at<float>(i, 2) = A_f(2);
                         matA.at<float>(i, 3) = nor_vec.x;
                         matA.at<float>(i, 4) = nor_vec.y;
                         matA.at<float>(i, 5) = nor_vec.z;
-                        matB.at<float>(i, 0) = - nor_vec.intensity;
 
                         H.row(i) = Eigen::Matrix<double, 1, DIM_OF_STATES>::Zero();
                         H.block<1,6>(i,0) << VEC_FROM_ARRAY(A), nor_vec.x, nor_vec.y, nor_vec.z;
@@ -1060,21 +1062,14 @@ int main(int argc, char** argv)
                     
                     cv::transpose(matA, matAt);
                     matAtA = matAt * matA;
-                    matAtB = matAt * matB;
-
-                    #ifdef USE_OPENCV_SOLVER
-                    cv::solve(matAtA, matAtB, matX, cv::DECOMP_QR);
-                    #endif
 
                     //Deterioration judgment
                     if (iterCount == 0)
                     {
                         cv::Mat matE(1, 6, CV_32F, cv::Scalar::all(0));
                         cv::Mat matV(6, 6, CV_32F, cv::Scalar::all(0));
-                        cv::Mat matV2(6, 6, CV_32F, cv::Scalar::all(0));
 
                         cv::eigen(matAtA, matE, matV);
-                        matV.copyTo(matV2);
 
                         isDegenerate = false;
                         float eignThre[6] = {1, 1, 1, 1, 1, 1};
@@ -1082,18 +1077,14 @@ int main(int argc, char** argv)
                         {
                             if (matE.at<float>(0, i) < eignThre[i])
                             {
-                                for (int j = 0; j < 6; j++)
-                                {
-                                    matV2.at<float>(i, j) = 0;
-                                }
                                 isDegenerate = true;
+                                degenerate_count ++;
                             }
                             else
                             {
                                 break;
                             }
                         }
-                        matP = matV.inv() * matV2;
                     }
 
                     Eigen::Vector3d rot_add, t_add, v_add, bg_add, ba_add, g_add;
@@ -1139,17 +1130,12 @@ int main(int argc, char** argv)
                         // std::cout<<"***solution: "<<solution.transpose()<<std::endl;
                         for (int ind = 0; ind < 3; ind ++)
                         {
-                            #ifdef USE_OPENCV_SOLVER
-                            rot_add[ind] = matX.at<float>(ind, 0);
-                            t_add[ind]   = matX.at<float>(ind+3, 0);
-                            #else
                             rot_add[ind] = solution(ind);
                             t_add[ind]   = solution(ind+3);
                             v_add[ind]   = solution(ind+6);
                             bg_add[ind]  = solution(ind+9);
                             ba_add[ind]  = solution(ind+12);
                             g_add[ind]   = solution(ind+15);
-                            #endif
                         }
 
                         R_global_cur = R_global_cur * Exp(rot_add);
@@ -1161,16 +1147,6 @@ int main(int argc, char** argv)
 
                         deltaR = rot_add.norm() * 57.3;
                         deltaT = t_add.norm() * 100.0;
-                    }
-
-                    if (isDegenerate)
-                    {
-                        degenerate_count ++;
-                        #ifdef USE_OPENCV_SOLVER
-                        cv::Mat matX2(6, 1, CV_32F, cv::Scalar::all(0));
-                        matX.copyTo(matX2);
-                        matX = matP * matX2;
-                        #endif
                     }
 
                     // V_global_cur = (T_global_cur - T_global_last) / (timeIMUkpCur - timeIMUkpLast);
@@ -1187,7 +1163,7 @@ int main(int argc, char** argv)
 
                     solve_time += omp_get_wtime() - solve_start;
                     
-                    if ((deltaR < 0.01 && deltaT < 0.01) || ave_residual <= 0.003)
+                    if ((deltaR < 0.01 && deltaT < 0.01))
                     {
                         rematch_en = true;
                         rematch_num ++;
@@ -1430,6 +1406,7 @@ int main(int argc, char** argv)
     }
     else
     {
+        #ifdef PLOT_AT_END
         if (!T1.empty())
         {
             plt::named_plot("time consumed",T1,s_plot);
@@ -1439,6 +1416,7 @@ int main(int argc, char** argv)
             plt::show();
             plt::pause(0.5);
         }
+        #endif
         std::cout << "no points saved";
     }
     //--------------------------

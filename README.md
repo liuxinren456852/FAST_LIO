@@ -80,4 +80,4 @@ rosbag play YOUR_DOWNLOADED.bag
 ```
 
 ## 5.Acknowledgments
-Thanks for LOAM(J. Zhang and S. Singh. LOAM: Lidar Odometry and Mapping in Real-time), [LOAM_NOTED](https://github.com/cuitaixiang/LOAM_NOTED), [Livox_Mapping](https://github.com/Livox-SDK/livox_mapping).
+Thanks for LOAM(J. Zhang and S. Singh. LOAM: Lidar Odometry and Mapping in Real-time), [Livox_Mapping](https://github.com/Livox-SDK/livox_mapping).

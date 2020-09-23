@@ -60,7 +60,7 @@ bool edge_jump_judge(const pcl::PointCloud<PointType> &pl, vector<orgtype> &type
 
 int main(int argc, char **argv)
 {
-  ros::init(argc, argv, "unity_feature");
+  ros::init(argc, argv, "feat_extraction");
   ros::NodeHandle n;
 
   // lidar_type = MID;
@@ -235,13 +235,6 @@ void mid_handler(const sensor_msgs::PointCloud2::ConstPtr &msg)
   pub_func(pl_surf, pub_surf, ct);
   pub_func(pl_corn, pub_corn, ct);
 
-  // printf("%u %u %u\n", pl.size(), pl_surf.size(), pl_corn.size());
-  // int a; cin >> a;
-  // if(a == 0)
-  // {
-  //   exit(0);
-  // }
-
 }
 
 void horizon_handler(const livox_ros_driver::CustomMsg::ConstPtr &msg)
@@ -389,9 +382,8 @@ void oust64_handler(const sensor_msgs::PointCloud2::ConstPtr &msg)
   pcl::fromROSMsg(*msg, pl_orig);
   
   vector<pcl::PointCloud<PointType>> pl_buff(N_SCANS);
-  vector<vector<orgtype>> typess(N_SCANS);
   pcl::PointCloud<PointType> pl_corn, pl_surf;
-
+  vector<vector<orgtype>> typess(N_SCANS);
   uint plsize = pl_orig.size();
 
   pl_corn.reserve(plsize); pl_surf.reserve(plsize);
@@ -409,6 +401,11 @@ void oust64_handler(const sensor_msgs::PointCloud2::ConstPtr &msg)
     }
   }
 
+  omp_set_num_threads(4);
+  #pragma omp parallel
+  {
+  pcl::PointCloud<PointType> pl_surf_tmp, pl_corn_tmp;
+  #pragma omp for nowait
   for(int j=0; j<N_SCANS; j++)
   {
     pcl::PointCloud<PointType> &pl = pl_buff[j];
@@ -424,7 +421,11 @@ void oust64_handler(const sensor_msgs::PointCloud2::ConstPtr &msg)
       types[i].dista = vx*vx + vy*vy + vz*vz;
     }
     types[plsize].range = sqrt(pl[plsize].x*pl[plsize].x + pl[plsize].y*pl[plsize].y);
-    give_feature(pl, types, pl_corn, pl_surf);
+    give_feature(pl, types, pl_corn_tmp, pl_surf_tmp);
+  }
+  #pragma omp critical 
+  pl_corn.insert(pl_corn.end(), pl_corn_tmp.begin(), pl_corn_tmp.end());
+  pl_surf.insert(pl_surf.end(), pl_surf_tmp.begin(), pl_surf_tmp.end());
   }
 
   ros::Time ct(ros::Time::now());
@@ -770,8 +771,6 @@ void give_feature(pcl::PointCloud<PointType> &pl, vector<orgtype> &types, pcl::P
   //     last_surface = -1;
   //   }
   // }
-
-
 }
 
 void pub_func(pcl::PointCloud<PointType> &pl, ros::Publisher pub, const ros::Time &ct)

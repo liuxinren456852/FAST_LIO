@@ -113,7 +113,6 @@ class ImuProcess
   double start_timestamp_;
   /// Making sure the equal size: v_imu_ and v_rot_
   std::deque<sensor_msgs::ImuConstPtr> v_imu_;
-  std::vector<Eigen::Matrix3d> v_rot_pcl_;
 
   like_loam::KeyPointPose v_rot_kp_;
 };
@@ -169,7 +168,6 @@ void ImuProcess::Reset()
   //gyr_int_.Reset(-1, nullptr);
   start_timestamp_ = -1;
   v_imu_.clear();
-  v_rot_pcl_.clear();
   v_rot_kp_.pose6D.clear();
 
   cur_pcl_in_.reset(new PointCloudXYZI());
@@ -258,8 +256,6 @@ void ImuProcess::UndistortPcl(const MeasureGroup &meas, const KPPoseConstPtr &st
   v_rot_kp_.header  = meas.lidar->header;
   v_rot_kp_.pose6D.clear();
   v_rot_kp_.pose6D.push_back(set_pose6d(0.0, Zero3d, Zero3d, vel_last, pos_last, R_last));
-  v_rot_pcl_.clear();
-  v_rot_pcl_.push_back(Eye3d);
 
   /*** forward pre-integration at each imu point ***/
   Eigen::Vector3d acc_kp, angvel_avr, acc_avr, vel_kp(vel_last), vel_e, pos_kp(pos_last), pos_e, pos_relat;
@@ -335,19 +331,17 @@ void ImuProcess::UndistortPcl(const MeasureGroup &meas, const KPPoseConstPtr &st
   vel_e = vel_kp + acc_kp * dt;
   pos_e = pos_kp + vel_kp * dt + 0.5 * acc_kp * dt * dt;
   R_e   = R_kp * Exp(angvel_avr, dt);
-  // pos_e = pos_kp;
-  // R_e   = R_kp;
+
   v_rot_kp_.gravity  = STD_VEC_FROM_EIGEN(Gravity_acc);
   v_rot_kp_.bias_gyr = STD_VEC_FROM_EIGEN(bias_gyr);
   v_rot_kp_.bias_acc = STD_VEC_FROM_EIGEN(bias_acc);
   v_rot_kp_.pos_end  = STD_VEC_FROM_EIGEN(pos_e);
   v_rot_kp_.vel_end  = STD_VEC_FROM_EIGEN(vel_e);
   v_rot_kp_.rot_end  = STD_VEC_FROM_EIGEN(R_e);
-  v_rot_kp_.cov = STD_VEC_FROM_EIGEN(cov_state_last); // std::vector<decltype(cov_state_last)::Scalar> (cov_state_last.data(), cov_state_last.data() + DIM_OF_STATES_SQUARE);
+  v_rot_kp_.cov = STD_VEC_FROM_EIGEN(cov_state_last); 
   
   Eigen::Vector3d euler_cur = correct_pi(R_e.eulerAngles(1, 0, 2));
   // std::cout<<"!!!! propagated states: gravity "<<Gravity_acc.transpose()<<std::endl;
-  // std::cout<<"!!!! propagated states: sta_cov "<<cov_state_last.diagonal().transpose()<<std::endl;
 
   /*** undistort each lidar point (backward pre-integration) ***/
   auto it_pcl = pcl_in_out.points.end() - 1;
@@ -368,7 +362,7 @@ void ImuProcess::UndistortPcl(const MeasureGroup &meas, const KPPoseConstPtr &st
       dt = it_pcl->curvature / double(1000) - head->offset_time;
       // i++; if (i % 50 == 1)  {std::cout<<"~~~~~~~dt: "<<dt<<" "<<it_pcl->curvature / double(1000) + pcl_beg_time<<std::endl;}
       
-      /* Transform to the 'end' frame, using only the rotation
+      /* Transform to the 'end' frame:
        * Note: Compensation direction is INVERSE of Frame's moving direction
        * So if we want to compensate a point at timestamp-i to the frame-e
        * P_compensate = R_e ^ T * (R_i * P_i + T_ei) where T_ei is represented in global frame */
@@ -377,12 +371,11 @@ void ImuProcess::UndistortPcl(const MeasureGroup &meas, const KPPoseConstPtr &st
       Eigen::Matrix3d R_i(R_kp * Exp(angvel_avr, dt));
       Eigen::Vector3d P_compensate = R_e.transpose() * (R_i * P_i + T_ei);
 
-      /// save Undistorted points and their rotation
+      // set Undistorted points
       it_pcl->x = P_compensate(0);
       it_pcl->y = P_compensate(1);
       it_pcl->z = P_compensate(2);
 
-      v_rot_pcl_.push_back(R_i);
       if (it_pcl == pcl_in_out.points.begin()) break;
     }
   }
