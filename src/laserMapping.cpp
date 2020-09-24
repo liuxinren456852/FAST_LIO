@@ -971,7 +971,7 @@ int main(int argc, char** argv)
                             //if(fabs(pd2) > 0.1) continue;
                             float s = 1 - 0.9 * fabs(pd2) / sqrt(sqrt(pointSel_tmpt.x * pointSel_tmpt.x + pointSel_tmpt.y * pointSel_tmpt.y + pointSel_tmpt.z * pointSel_tmpt.z));
 
-                            if (s > 0.1)
+                            if ((s > 0.1) && (std::abs(s * pd2) < 0.5))
                             {
                                 point_selected_surf[i] = true;
                                 laserPoint_tmp.push_back(pointOri_tmpt);
