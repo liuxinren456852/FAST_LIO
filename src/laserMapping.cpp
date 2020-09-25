@@ -1228,14 +1228,6 @@ int main(int argc, char** argv)
             R_global_last = R_global_cur;
             timeIMUkpLast = timeIMUkpCur;
 
-            LaserCloudSurfaceBuff.pop_front();
-            rot_kp_imu_buff.pop_front();
-            if (!LaserCloudSurfaceBuff.empty() && !rot_kp_imu_buff.empty())
-            {
-                timeIMUkpCur  = rot_kp_imu_buff.front().header.stamp.toSec();
-                timeLaserCloudSurfLast = LaserCloudSurfaceBuff.front().header.stamp.toSec();
-            }
-
 #ifdef USING_CORNER
             for (int i = 0; i < laserCloudCornerLast->points.size(); i++)
             {
@@ -1341,22 +1333,22 @@ int main(int argc, char** argv)
 
             sensor_msgs::PointCloud2 laserCloudFullRes3;
             pcl::toROSMsg(*laserCloudFullResColor, laserCloudFullRes3);
-            laserCloudFullRes3.header.stamp = ros::Time().fromSec(timeLaserCloudCornerLast);
+            laserCloudFullRes3.header.stamp = ros::Time().fromSec(timeLaserCloudSurfLast);
             laserCloudFullRes3.header.frame_id = "/camera_init";
             pubLaserCloudFullRes.publish(laserCloudFullRes3);
 
-            // sensor_msgs::PointCloud2 laserCloudMap;
-            // pcl::toROSMsg(*laserCloudSurfFromMap, laserCloudMap);
-            // laserCloudMap.header.stamp = ros::Time().fromSec(timeLaserCloudCornerLast);
-            // laserCloudMap.header.frame_id = "/camera_init";
-            // pubLaserCloudMap.publish(laserCloudMap);
+            sensor_msgs::PointCloud2 laserCloudMap;
+            pcl::toROSMsg(*laserCloudSurfFromMap, laserCloudMap);
+            laserCloudMap.header.stamp = ros::Time().fromSec(timeLaserCloudSurfLast);
+            laserCloudMap.header.frame_id = "/camera_init";
+            pubLaserCloudMap.publish(laserCloudMap);
 
             *laserCloudFullResColor_pcd += *laserCloudFullResColor;
 
             geometry_msgs::Quaternion geoQuat = tf::createQuaternionMsgFromRollPitchYaw
                     (transformAftMapped[2], - transformAftMapped[0], - transformAftMapped[1]);
 
-            odomAftMapped.header.stamp = ros::Time().fromSec(timeLaserCloudCornerLast);
+            odomAftMapped.header.stamp = ros::Time().fromSec(timeLaserCloudSurfLast);
             odomAftMapped.pose.pose.orientation.x = -geoQuat.y;
             odomAftMapped.pose.pose.orientation.y = -geoQuat.z;
             odomAftMapped.pose.pose.orientation.z = geoQuat.x;
@@ -1389,6 +1381,14 @@ int main(int argc, char** argv)
                 kf_pose << -geoQuat.y,-geoQuat.z,geoQuat.x,geoQuat.w,transformAftMapped[3],transformAftMapped[4],transformAftMapped[5];
                 keyframe_pose.push_back(kf_pose);
                 kfNum = 0;
+            }
+
+            LaserCloudSurfaceBuff.pop_front();
+            rot_kp_imu_buff.pop_front();
+            if (!LaserCloudSurfaceBuff.empty() && !rot_kp_imu_buff.empty())
+            {
+                timeIMUkpCur  = rot_kp_imu_buff.front().header.stamp.toSec();
+                timeLaserCloudSurfLast = LaserCloudSurfaceBuff.front().header.stamp.toSec();
             }
 
             /*** plot variables ***/
